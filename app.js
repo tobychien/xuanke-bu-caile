@@ -38,12 +38,10 @@
     if (tab === 'plan') renderPlan();
     if (tab === 'courses') renderCourses();
     if (tab === 'reviews') renderReviews();
-    if (tab === 'admin') { if (API && ADM.token) adminLoad(); else renderAdmin(); }
     window.scrollTo({ top: 0 });
   }
   $('#tabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) show(b.dataset.tab); });
   $('#sem').textContent = '管理學院學士班 · ' + window.SEMESTER;
-  if (new URLSearchParams(location.search).has('admin')) $('#adminTab').hidden = false;
 
   // ---------- 評價資料 ----------
   const API = (window.API_URL || '').trim();
@@ -360,71 +358,7 @@
     $('#fText').value = ''; $('#fCount').textContent = '0 / 300';
   }
 
-  // ---------- 5. 審核後台（網址加 ?admin=1） ----------
-  const ADM = { token: '', pending: [], published: [], msg: '' };
-  try { ADM.token = sessionStorage.getItem('yzu_adm') || ''; } catch { }
-  const setTok = t => { ADM.token = t; try { t ? sessionStorage.setItem('yzu_adm', t) : sessionStorage.removeItem('yzu_adm'); } catch { } };
-  const cname = code => (C.find(c => c.code === code) || { name: code }).name;
-  async function adminLoad() {
-    try {
-      const [p, q] = await Promise.all([api({ action: 'pending', token: ADM.token }), api({ action: 'published', token: ADM.token })]);
-      if (!p.ok || !q.ok) { setTok(''); ADM.msg = '登入已過期，請重新登入'; } else { ADM.pending = p.items; ADM.published = q.items; ADM.msg = ''; }
-    } catch { ADM.msg = '連不上伺服器'; }
-    renderAdmin();
-  }
-  function renderAdmin() {
-    const box = $('#pendingList');
-    if (!API) { // 本機模式（沒有後端）
-      const list = store.get('pending', []);
-      box.innerHTML = list.length ? list.map(r => `<div class="pend"><div class="row-between"><b>${esc(cname(r.code))} · ${esc(r.teacher)}</b>
-      <span class="tag ${r.ai.level === 'pass' ? 'en' : 'need'}">AI 預審：${r.ai.level === 'pass' ? '通過' : '標記'}</span></div>
-      <p>${esc(r.text)}</p>${r.ai.reasons.length ? `<p class="meta">原因：${r.ai.reasons.map(esc).join('；')}</p>` : ''}
-      <div class="actions"><button class="btn sm accent" data-ok="${r.id}">核准上架</button><button class="ghost" data-no="${r.id}">退回</button></div></div>`).join('')
-        : '<div class="empty">目前沒有待審核的投稿。</div>';
-      return;
-    }
-    if (!ADM.token) {
-      box.innerHTML = `<form id="admLogin" class="form" autocomplete="off"><label>管理密碼<input type="password" id="admPw" maxlength="100" autocomplete="current-password"></label><div class="row-between" style="margin-top:12px"><span class="meta">${esc(ADM.msg)}</span><button class="btn accent" type="submit">登入</button></div></form>`;
-      return;
-    }
-    const item = (r, pub) => `<div class="pend"><div class="row-between"><b>${esc(cname(r.code))} · ${esc(r.teacher)}</b>${r.flags ? `<span class="tag need">標記</span>` : '<span class="tag en">預審通過</span>'}</div>
-      <p>${esc(r.text)}</p><p class="meta">${r.homework ? '作業量 ' + esc(r.homework) + '　' : ''}${r.grading ? '給分 ' + esc(r.grading) + '　' : ''}${r.flags ? '標記：' + esc(r.flags) : ''}</p>
-      <div class="actions">${pub ? `<button class="ghost" data-st="pending" data-id="${esc(r.id)}">下架</button><button class="ghost" data-st="deleted" data-id="${esc(r.id)}">刪除</button>` : `<button class="btn sm accent" data-st="approved" data-id="${esc(r.id)}">核准上架</button><button class="ghost" data-st="rejected" data-id="${esc(r.id)}">退回</button>`}</div></div>`;
-    box.innerHTML = `<div class="row-between"><span class="meta">${esc(ADM.msg)}</span><span><button class="ghost" id="admPwBtn">改密碼</button> <button class="ghost" id="admOut">登出</button></span></div>
-      <div id="admPwBox" class="form" hidden><label>舊密碼<input type="password" id="admOld" autocomplete="current-password" maxlength="100"></label><label>新密碼（至少 10 字元）<input type="password" id="admNew" autocomplete="new-password" maxlength="100"></label><button class="btn sm accent" id="admPwSave">更新密碼</button></div>
-      <h4>待審核（${ADM.pending.length}）</h4>${ADM.pending.length ? ADM.pending.map(r => item(r, false)).join('') : '<div class="empty">目前沒有待審核的投稿。</div>'}
-      <h4 style="margin-top:20px">已上架（${ADM.published.length}）</h4>${ADM.published.length ? ADM.published.map(r => item(r, true)).join('') : '<div class="empty">還沒有上架的投稿。</div>'}`;
-  }
-  $('#pendingList').addEventListener('submit', async e => {
-    if (e.target.id !== 'admLogin') return; e.preventDefault();
-    const pw = $('#admPw').value; $('#admPw').value = ''; ADM.msg = '登入中…'; renderAdmin();
-    try {
-      const r = await api({ action: 'login', password: pw });
-      if (r.ok) { setTok(r.token); ADM.msg = ''; await adminLoad(); return; }
-      ADM.msg = r.error === 'locked' ? '錯誤次數太多，請 10 分鐘後再試' : '密碼不正確';
-    } catch { ADM.msg = '連不上伺服器'; }
-    renderAdmin();
-  });
-  $('#pendingList').addEventListener('click', async e => {
-    if (!API) {
-      const ok = e.target.closest('[data-ok]'), no = e.target.closest('[data-no]'); if (!ok && !no) return;
-      const id = (ok || no).dataset.ok || (ok || no).dataset.no; const list = store.get('pending', []); const it = list.find(x => x.id === id);
-      store.set('pending', list.filter(x => x.id !== id));
-      if (ok && it) { const { ai, ...rest } = it; store.set('approved', [...store.get('approved', []), rest]); toast('已上架'); } else toast('已退回');
-      renderAdmin(); return;
-    }
-    const st = e.target.closest('[data-st]');
-    if (st) { st.disabled = true; try { const r = await api({ action: 'setStatus', token: ADM.token, id: st.dataset.id, status: st.dataset.st }); if (!r.ok) ADM.msg = r.error === 'unauthorized' ? '登入已過期' : '操作失敗'; else toast('完成'); if (r.error === 'unauthorized') setTok(''); } catch { ADM.msg = '連不上伺服器'; } await adminLoad(); loadCloud(); return; }
-    if (e.target.id === 'admOut') { try { await api({ action: 'logout', token: ADM.token }); } catch { } setTok(''); ADM.pending = ADM.published = []; renderAdmin(); return; }
-    if (e.target.id === 'admPwBtn') {
-      $('#admPwBox').hidden = !$('#admPwBox').hidden; return;
-    }
-    if (e.target.id === 'admPwSave') {
-      const o = $('#admOld').value, n = $('#admNew').value; if (n.length < 10) { toast('新密碼至少 10 個字元'); return; }
-      try { const r = await api({ action: 'setPassword', token: ADM.token, oldPassword: o, password: n }); if (r.ok) { setTok(''); ADM.msg = '密碼已更新，請用新密碼重新登入'; renderAdmin(); } else toast(r.error === 'bad_password' ? '舊密碼不正確' : '操作失敗'); } catch { toast('連不上伺服器'); }
-    }
-  });
-  if (API) { loadCloud(); if (ADM.token && new URLSearchParams(location.search).has('admin')) adminLoad(); }
+  if (API) loadCloud();
 
   // ---------- 6. 自動選課 ----------
   const MODES = {
